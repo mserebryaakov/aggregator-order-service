@@ -25,9 +25,5 @@ services:
       POSTGRES_USER: "orderdbuser"
       POSTGRES_PASSWORD: "orderdbpassword"
 
-
 networks:
   aggregator-service-network:
-
-volumes:
-  minio-storage:
