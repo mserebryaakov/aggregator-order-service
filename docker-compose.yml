@@ -1,0 +1,33 @@
+version: "3"
+
+services:
+
+  orderservice:
+    build: .
+    ports:
+      - "8082:8082"
+    depends_on:
+      - orderdb
+    env_file:
+      - .env
+    networks:
+      - aggregator-service-network
+    restart: unless-stopped
+
+  orderdb:
+    image: postgres:latest
+    ports:
+      - "5434:5432"
+    networks:
+      - aggregator-service-network
+    environment:
+      POSTGRES_DB: "orderdb"
+      POSTGRES_USER: "orderdbuser"
+      POSTGRES_PASSWORD: "orderdbpassword"
+
+
+networks:
+  aggregator-service-network:
+
+volumes:
+  minio-storage:
