@@ -95,7 +95,7 @@ func (a *authAdpater) Login(email, password, domain string) error {
 	}
 }
 
-func (a *authAdpater) Auth(role []string, clientToken, domain string) (int, error) {
+func (a *authAdpater) Auth(role []string, clientToken, domain string) (int, uint, error) {
 	url := fmt.Sprintf("http://%s%s%s", a.authHost, a.authPort, "/system/auth/validate")
 
 	requestBody := struct {
@@ -106,13 +106,13 @@ func (a *authAdpater) Auth(role []string, clientToken, domain string) (int, erro
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		a.log.Errorf("failed to marshal login request body:", err)
-		return 0, fmt.Errorf("failed to marshal login request body")
+		return 0, 0, fmt.Errorf("failed to marshal login request body")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		a.log.Errorf("failed create auth request - /auth/validate")
-		return 0, fmt.Errorf("failed create auth request")
+		return 0, 0, fmt.Errorf("failed create auth request")
 	}
 
 	q := req.URL.Query()
@@ -125,11 +125,24 @@ func (a *authAdpater) Auth(role []string, clientToken, domain string) (int, erro
 	resp, err := a.client.Do(req)
 	if err != nil {
 		a.log.Errorf("failed auth request:", err)
-		return 0, fmt.Errorf("failed auth request")
+		return 0, 0, fmt.Errorf("failed auth request")
 	}
 	defer resp.Body.Close()
 
-	return resp.StatusCode, nil
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, 0, nil
+	}
+
+	var responseBody struct {
+		UserID uint `json:"userId"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&responseBody)
+	if err != nil {
+		a.log.Errorf("failed to decode response body:", err)
+		return 0, 0, fmt.Errorf("failed to decode response body")
+	}
+
+	return resp.StatusCode, responseBody.UserID, nil
 }
 
 func (a *authAdpater) Init(domain string) error {
