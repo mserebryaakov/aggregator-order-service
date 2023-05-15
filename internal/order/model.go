@@ -17,7 +17,7 @@ type DeliveryStatus struct {
 type Order struct {
 	gorm.Model
 	UserID           uint
-	ProductsIDs      []uint
+	ProductsIDs      string
 	DeliveryAddress  string
 	TotalPrice       float64
 	AddressesShopID  uint

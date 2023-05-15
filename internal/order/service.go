@@ -1,6 +1,11 @@
 package order
 
-import "github.com/sirupsen/logrus"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/sirupsen/logrus"
+)
 
 type OrderService interface {
 	CreateOrder(order *Order, schema string) (uint, error)
@@ -10,6 +15,8 @@ type OrderService interface {
 	GetOrderByID(userId, orderId uint, schema string) (*Order, error)
 	GetOrdersByDeliveryID(deliveryUserID uint, schema string) ([]Order, error)
 	GetUnaxeptedOrderByAddressShopId(addressShopId []uint, schema string) ([]Order, error)
+	CreateSchema(schema string) error
+	DeleteSchema(schema string) error
 }
 
 type orderService struct {
@@ -27,6 +34,13 @@ func NewService(storage Storage, log *logrus.Entry) OrderService {
 func (s *orderService) CreateOrder(order *Order, schema string) (uint, error) {
 	var WaitingProcessingDelivery uint = 4
 	var WaitingProcessingPayment uint = 1
+
+	if order.ProductsIDs != "" {
+		err := validateProductIDs(order.ProductsIDs)
+		if err != nil {
+			return 0, err
+		}
+	}
 
 	newOrder := Order{
 		UserID:           order.UserID,
@@ -63,4 +77,23 @@ func (s *orderService) GetOrdersByDeliveryID(deliveryUserID uint, schema string)
 
 func (s *orderService) GetUnaxeptedOrderByAddressShopId(addressShopId []uint, schema string) ([]Order, error) {
 	return s.storage.GetUnaxeptedOrderByAddressShopId(addressShopId, schema)
+}
+
+func (s *orderService) CreateSchema(schema string) error {
+	return s.storage.CreateSchema(schema)
+}
+
+func (s *orderService) DeleteSchema(schema string) error {
+	return s.storage.DeleteSchema(schema)
+}
+
+func validateProductIDs(productIDs string) error {
+	ids := strings.Split(productIDs, ",")
+	for _, id := range ids {
+		_, err := strconv.ParseUint(id, 10, 64)
+		if err != nil {
+			return errProductIDsString
+		}
+	}
+	return nil
 }

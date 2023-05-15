@@ -15,6 +15,8 @@ type Storage interface {
 	GetOrderByID(userId, orderID uint, schema string) (*Order, error)
 	GetOrdersByDeliveryID(deliveryUserID uint, schema string) ([]Order, error)
 	GetUnaxeptedOrderByAddressShopId(addressShopId []uint, schema string) ([]Order, error)
+	CreateSchema(domain string) error
+	DeleteSchema(domain string) error
 
 	PaymentSuccess(orderID uint, schema string) error
 }
@@ -76,8 +78,17 @@ func (s *OrderStorage) TakeOrderСourier(courierID uint, orderID uint, schema st
 		return err
 	}
 
-	return db.Model(&Order{}).Where("id = ?", orderID).Updates(
-		map[string]interface{}{"courier_id": courierID, "delivery_status_id": 2}).Error
+	result := db.Model(&Order{}).Where("id = ?", orderID).Updates(
+		map[string]interface{}{"courier_id": courierID, "delivery_status_id": 2})
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errTakeOrderNotFound
+	}
+
+	return nil
 }
 
 func (s *OrderStorage) GetOrdersByUserID(userID uint, schema string) ([]Order, error) {
@@ -144,4 +155,59 @@ func (s *OrderStorage) GetUnaxeptedOrderByAddressShopId(addressShopId []uint, sc
 	}
 
 	return order, nil
+}
+
+func (s *OrderStorage) CreateSchema(domain string) error {
+	publicschema, err := s.scp.GetConnectionPool("public")
+	if err != nil {
+		return err
+	}
+
+	tx := publicschema.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
+	var count int64
+	tx.Raw("SELECT COUNT(*) FROM pg_namespace WHERE nspname = ?", domain).Scan(&count)
+	if count != 0 {
+		tx.Rollback()
+		return fmt.Errorf("create schema failed (already exists): %s", domain)
+	}
+
+	if err := tx.Exec("CREATE SCHEMA IF NOT EXISTS " + domain).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	err = tx.Commit().Error
+	if err != nil {
+		return err
+	}
+
+	resschema, err := s.scp.GetConnectionPool(domain)
+	if err != nil {
+		return err
+	}
+
+	err = RunSchemaMigration(resschema)
+	if err != nil {
+		fmt.Printf("Fatal create schema - failed migrations - %s", domain)
+		return err
+	}
+
+	return nil
+}
+
+func (s *OrderStorage) DeleteSchema(domain string) error {
+	publicschema, err := s.scp.GetConnectionPool("public")
+	if err != nil {
+		return err
+	}
+
+	if err := publicschema.Exec("DROP SCHEMA IF EXISTS " + domain + " CASCADE").Error; err != nil {
+		return err
+	}
+
+	return nil
 }

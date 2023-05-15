@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	//systemRole   string = "system"
+	systemRole   string = "system"
 	clientRole   string = "client"
 	deliveryRole string = "delivery"
 	adminRole    string = "admin"
@@ -40,6 +40,11 @@ func (h *orderHandler) Register(router *gin.Engine) {
 		order.GET("", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.GetOrderByID)
 		order.GET("/delivery", h.authWithRoleMiddleware([]string{deliveryRole}), h.GetUnaxeptedOrderByAddressShopId)
 		order.GET("/delivery/my", h.authWithRoleMiddleware([]string{deliveryRole}), h.GetOrdersByDeliveryID)
+	}
+	init := router.Group("/init")
+	{
+		init.POST("/start", h.authWithRoleMiddlewareSystem([]string{systemRole}), h.initstart)
+		init.POST("/rollback", h.authWithRoleMiddlewareSystem([]string{systemRole}), h.initrollback)
 	}
 }
 
@@ -97,6 +102,10 @@ func (h *orderHandler) TakeOrderСourier(c *gin.Context) {
 
 	err = h.orderService.TakeOrderСourier(userId, orderId, domain)
 	if err != nil {
+		if err == errTakeOrderNotFound {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
 		h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -259,6 +268,44 @@ func (h *orderHandler) GetUnaxeptedOrderByAddressShopId(c *gin.Context) {
 	c.JSON(http.StatusOK, orders)
 }
 
+func (h *orderHandler) initstart(c *gin.Context) {
+	h.log.Debugf("login hadnler initstart")
+
+	domain := c.Query("domain")
+	if domain == "" {
+		h.log.Errorf("initstart: missing query parameter (domain)")
+		h.newErrorResponse(c, http.StatusBadRequest, "missing query parameter (domain)")
+		return
+	}
+
+	err := h.orderService.CreateSchema(domain)
+	if err != nil {
+		h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{})
+}
+
+func (h *orderHandler) initrollback(c *gin.Context) {
+	h.log.Debugf("login hadnler initrollback")
+
+	domain := c.Query("domain")
+	if domain == "" {
+		h.newErrorResponse(c, http.StatusBadRequest, "missing query parameter (domain)")
+		return
+	}
+
+	err := h.orderService.DeleteSchema(domain)
+	if err != nil {
+		h.log.Errorf("initrollback: fatal error delete schema - %s", err)
+		h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{})
+}
+
 type response struct {
 	Message string `json:"message"`
 }
@@ -287,12 +334,12 @@ func (h *orderHandler) getDomain(c *gin.Context) (string, error) {
 func (h *orderHandler) getUserId(c *gin.Context) (uint, error) {
 	userId, exists := c.Get("userId")
 	if exists {
-		userIdStr, ok := userId.(string)
+		userIdUint, ok := userId.(uint)
 		if ok {
-			userIdUint, err := convertStringToUint(userIdStr)
-			if err != nil {
-				return 0, fmt.Errorf("incorrect userId type - %v", userId)
-			}
+			// userIdUint, err := convertStringToUint(userIdStr)
+			// if err != nil {
+			// 	return 0, fmt.Errorf("incorrect userId type - %v", userId)
+			// }
 			return userIdUint, nil
 		} else {
 			return 0, fmt.Errorf("incorrect userId type - %v", userId)
@@ -336,6 +383,50 @@ func (h *orderHandler) authWithRoleMiddleware(role []string) gin.HandlerFunc {
 		switch code {
 		case 200:
 			c.Set("domain", shopDomain)
+			c.Set("userId", userId)
+			c.Next()
+		case 403:
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		case 401:
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		case 404:
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		default:
+			h.log.Errorf("fatal unexpected auth result with code - %v", code)
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+func (h *orderHandler) authWithRoleMiddlewareSystem(role []string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		domain := c.Query("domain")
+		if domain == "" {
+			h.log.Errorf("authWithRoleMiddlewareSystem: missing query parameter (domain)")
+			h.newErrorResponse(c, http.StatusBadRequest, "missing query parameter (domain)")
+			return
+		}
+
+		tokenString := c.Request.Header.Get("Authorization")
+
+		if tokenString == "" {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+
+		code, userId, err := h.authadapter.Auth(role, tokenString, domain)
+		if err != nil {
+			h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		switch code {
+		case 200:
+			c.Set("domain", domain)
 			c.Set("userId", userId)
 			c.Next()
 		case 403:

@@ -122,6 +122,8 @@ func (a *authAdpater) Auth(role []string, clientToken, domain string) (int, uint
 	req.Header.Set("Authorization", a.systemToken)
 	req.Header.Set("X-System-Token", clientToken)
 
+	req.Header.Set("Content-Type", "application/json")
+
 	resp, err := a.client.Do(req)
 	if err != nil {
 		a.log.Errorf("failed auth request:", err)
@@ -159,6 +161,8 @@ func (a *authAdpater) Init(domain string) error {
 	q.Add("domain", domain)
 	req.URL.RawQuery = q.Encode()
 
+	req.Header.Set("Content-Type", "application/json")
+
 	resp, err := a.client.Do(req)
 	if err != nil {
 		a.log.Errorf("failed init request:", err)
@@ -191,6 +195,7 @@ func (a *authAdpater) Rollback(domain string) error {
 	}
 
 	req.Header.Set("Authorization", a.systemToken)
+	req.Header.Set("Content-Type", "application/json")
 
 	q := req.URL.Query()
 	q.Add("domain", domain)
