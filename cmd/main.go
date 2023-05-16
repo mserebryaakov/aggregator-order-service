@@ -55,7 +55,9 @@ func main() {
 
 	router := gin.New()
 
-	orderHandler := order.NewHandler(orderService, orderLog, authAdapter)
+	paymentAdapter := order.NewPaymentAdapter(orderLog, env.PaymentHost, env.PaymentPort)
+
+	orderHandler := order.NewHandler(orderService, orderLog, authAdapter, paymentAdapter, env.PaymentRedirectURL)
 	orderHandler.Register(router)
 
 	server := new(httpserver.Server)

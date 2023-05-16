@@ -3,9 +3,11 @@ package order
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -17,16 +19,20 @@ var (
 )
 
 type orderHandler struct {
-	log          *logrus.Entry
-	orderService OrderService
-	authadapter  *authAdpater
+	log            *logrus.Entry
+	orderService   OrderService
+	authadapter    *authAdapter
+	paymentAdapter *paymentAdapter
+	redirectPath   string
 }
 
-func NewHandler(orderService OrderService, log *logrus.Entry, authadapter *authAdpater) *orderHandler {
+func NewHandler(orderService OrderService, log *logrus.Entry, authadapter *authAdapter, paymentAdapter *paymentAdapter, redirectPath string) *orderHandler {
 	return &orderHandler{
-		log:          log,
-		orderService: orderService,
-		authadapter:  authadapter,
+		log:            log,
+		orderService:   orderService,
+		authadapter:    authadapter,
+		paymentAdapter: paymentAdapter,
+		redirectPath:   redirectPath,
 	}
 }
 
@@ -40,12 +46,39 @@ func (h *orderHandler) Register(router *gin.Engine) {
 		order.GET("", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.GetOrderByID)
 		order.GET("/delivery", h.authWithRoleMiddleware([]string{deliveryRole}), h.GetUnaxeptedOrderByAddressShopId)
 		order.GET("/delivery/my", h.authWithRoleMiddleware([]string{deliveryRole}), h.GetOrdersByDeliveryID)
+		order.GET("/redirect/:id/:domain", h.CheckRedirect)
 	}
 	init := router.Group("/init")
 	{
 		init.POST("/start", h.authWithRoleMiddlewareSystem([]string{systemRole}), h.initstart)
 		init.POST("/rollback", h.authWithRoleMiddlewareSystem([]string{systemRole}), h.initrollback)
 	}
+}
+
+func (h *orderHandler) CheckRedirect(c *gin.Context) {
+	id := c.Param("id")
+	domain := c.Param("domain")
+
+	order, err := h.orderService.GetOrderByPaymentKey(id, domain)
+	if err != nil {
+		h.log.Errorf("CheckRedirect error (GetOrderByPaymentKey) - %v", err)
+		c.JSON(200, gin.H{})
+	}
+
+	payment, _, err := h.paymentAdapter.GetPayment(order.PaymentID)
+	if err != nil {
+		h.log.Errorf("CheckRedirect error (GetPayment) - %v", err)
+		c.JSON(200, gin.H{})
+	}
+
+	if payment.Status == "succeeded" {
+		err := h.orderService.PaymentSuccess(order.ID, domain)
+		if err != nil {
+			h.log.Errorf("CheckRedirect error - %v", err)
+		}
+	}
+
+	c.JSON(200, gin.H{})
 }
 
 func (h *orderHandler) CreateOrder(c *gin.Context) {
@@ -64,13 +97,45 @@ func (h *orderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	_, err = h.orderService.CreateOrder(&body, domain)
+	body.PaymentKey = uuid.New().String()
+
+	orderId, err := h.orderService.CreateOrder(&body, domain)
 	if err != nil {
 		h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{})
+	var createPayment CreatePayment = CreatePayment{
+		Amount: Amount{
+			Value:    strconv.FormatFloat(body.TotalPrice, 'f', 2, 64),
+			Currency: "RUB",
+		},
+		Capture: true,
+		Confirmation: Confirmation{
+			Type:      "redirect",
+			ReturnURL: fmt.Sprintf("%s%s%s/%s", h.redirectPath, "/redirect/", body.PaymentKey, domain),
+		},
+		Description: body.DeliveryAddress,
+		Metadata: Metadata{
+			OrderID: strconv.FormatUint(uint64(orderId), 10),
+		},
+	}
+
+	payment, _, err := h.paymentAdapter.CreatePayment(createPayment)
+	if err != nil {
+		h.newErrorResponse(c, http.StatusInternalServerError, "failed create payment")
+		return
+	}
+
+	err = h.orderService.UpdateOrderPaymentID(orderId, payment.ID, domain)
+	if err != nil {
+		h.newErrorResponse(c, http.StatusInternalServerError, "update paymentId in orderIdFailed")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"url": payment.Confirmation.ConfirmationURL,
+	})
 }
 
 func (h *orderHandler) TakeOrderСourier(c *gin.Context) {

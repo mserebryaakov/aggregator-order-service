@@ -17,6 +17,8 @@ type Storage interface {
 	GetUnaxeptedOrderByAddressShopId(addressShopId []uint, schema string) ([]Order, error)
 	CreateSchema(domain string) error
 	DeleteSchema(domain string) error
+	UpdateOrderPaymentID(orderID uint, paymentID string, schema string) error
+	GetOrderByPaymentKey(paymentKey string, schema string) (*Order, error)
 
 	PaymentSuccess(orderID uint, schema string) error
 }
@@ -210,4 +212,39 @@ func (s *OrderStorage) DeleteSchema(domain string) error {
 	}
 
 	return nil
+}
+
+func (s *OrderStorage) UpdateOrderPaymentID(orderID uint, paymentID string, schema string) error {
+	publicschema, err := s.scp.GetConnectionPool(schema)
+	if err != nil {
+		return err
+	}
+
+	result := publicschema.Model(&Order{}).Where("id = ?", orderID).Update("payment_id", paymentID)
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errChangePaymentIdNotFound
+	}
+
+	return nil
+}
+
+func (s *OrderStorage) GetOrderByPaymentKey(paymentKey string, schema string) (*Order, error) {
+	publicschema, err := s.scp.GetConnectionPool(schema)
+	if err != nil {
+		return nil, err
+	}
+
+	var order Order
+	result := publicschema.Where("payment_key = ?", paymentKey).First(&order)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, errOrderWithPaymentKeyNotfound
+	}
+	return &order, nil
 }

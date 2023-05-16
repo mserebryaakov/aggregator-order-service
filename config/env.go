@@ -19,6 +19,10 @@ type AppEnv struct {
 	AuthHost string
 	AuthPort string
 
+	PaymentHost        string
+	PaymentPort        string
+	PaymentRedirectURL string
+
 	SupervisorEmail        string
 	SupervisorHashPassword string
 }
@@ -35,6 +39,9 @@ func GetEnvironment() (env AppEnv, err error) {
 		TimeZone:               getEnv("POSTGRES_TIMEZONE", "Europe/Moscow"),
 		AuthHost:               getEnv("AUTH_HOST", "localhost"),
 		AuthPort:               getEnv("AUTH_PORT", ":8080"),
+		PaymentHost:            getEnv("PAYMENT_HOST", "localhost"),
+		PaymentPort:            getEnv("PAYMENT_PORT", ":8083"),
+		PaymentRedirectURL:     getEnv("PAYMENT_REDIRECT_PATH", ""),
 		SupervisorEmail:        getEnv("SUPERVISOR_EMAIL", ""),
 		SupervisorHashPassword: getEnv("SUPERVISOR_HASHPASSWORD", ""),
 	}
@@ -45,6 +52,10 @@ func GetEnvironment() (env AppEnv, err error) {
 	}
 
 	if env.SupervisorEmail == "" || env.SupervisorHashPassword == "" {
+		return env, fmt.Errorf("incorrect environment params")
+	}
+
+	if env.PaymentRedirectURL == "" {
 		return env, fmt.Errorf("incorrect environment params")
 	}
 

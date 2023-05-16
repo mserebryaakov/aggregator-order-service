@@ -21,6 +21,8 @@ type Order struct {
 	DeliveryAddress  string
 	TotalPrice       float64
 	AddressesShopID  uint
+	PaymentID        string
+	PaymentKey       string
 	DeliveryStatusID *uint
 	DeliveryStatus   DeliveryStatus `gorm:"foreignKey:DeliveryStatusID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	PaymentStatusID  *uint

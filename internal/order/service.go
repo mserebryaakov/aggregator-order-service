@@ -17,6 +17,9 @@ type OrderService interface {
 	GetUnaxeptedOrderByAddressShopId(addressShopId []uint, schema string) ([]Order, error)
 	CreateSchema(schema string) error
 	DeleteSchema(schema string) error
+	UpdateOrderPaymentID(orderID uint, paymentID string, schema string) error
+	GetOrderByPaymentKey(paymentKey string, schema string) (*Order, error)
+	PaymentSuccess(orderID uint, schema string) error
 }
 
 type orderService struct {
@@ -96,4 +99,16 @@ func validateProductIDs(productIDs string) error {
 		}
 	}
 	return nil
+}
+
+func (s *orderService) UpdateOrderPaymentID(orderID uint, paymentID string, schema string) error {
+	return s.storage.UpdateOrderPaymentID(orderID, paymentID, schema)
+}
+
+func (s *orderService) GetOrderByPaymentKey(paymentKey string, schema string) (*Order, error) {
+	return s.storage.GetOrderByPaymentKey(paymentKey, schema)
+}
+
+func (s *orderService) PaymentSuccess(orderID uint, schema string) error {
+	return s.storage.PaymentSuccess(orderID, schema)
 }

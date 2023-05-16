@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type authAdpater struct {
+type authAdapter struct {
 	systemToken string
 	client      http.Client
 	log         *logrus.Entry
@@ -19,12 +19,12 @@ type authAdpater struct {
 	authPort    string
 }
 
-func NewAuthAdapter(log *logrus.Entry, authHost, authPort string) *authAdpater {
+func NewAuthAdapter(log *logrus.Entry, authHost, authPort string) *authAdapter {
 	c := http.Client{
 		Timeout: time.Second * 10,
 	}
 
-	return &authAdpater{
+	return &authAdapter{
 		client:   c,
 		log:      log,
 		authHost: authHost,
@@ -32,7 +32,7 @@ func NewAuthAdapter(log *logrus.Entry, authHost, authPort string) *authAdpater {
 	}
 }
 
-func (a *authAdpater) Login(email, password, domain string) error {
+func (a *authAdapter) Login(email, password, domain string) error {
 	requestBody := struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -95,7 +95,7 @@ func (a *authAdpater) Login(email, password, domain string) error {
 	}
 }
 
-func (a *authAdpater) Auth(role []string, clientToken, domain string) (int, uint, error) {
+func (a *authAdapter) Auth(role []string, clientToken, domain string) (int, uint, error) {
 	url := fmt.Sprintf("http://%s%s%s", a.authHost, a.authPort, "/system/auth/validate")
 
 	requestBody := struct {
@@ -147,7 +147,7 @@ func (a *authAdpater) Auth(role []string, clientToken, domain string) (int, uint
 	return resp.StatusCode, responseBody.UserID, nil
 }
 
-func (a *authAdpater) Init(domain string) error {
+func (a *authAdapter) Init(domain string) error {
 	url := fmt.Sprintf("http://%s%s%s", a.authHost, a.authPort, "/init/start")
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
@@ -186,7 +186,7 @@ func (a *authAdpater) Init(domain string) error {
 	}
 }
 
-func (a *authAdpater) Rollback(domain string) error {
+func (a *authAdapter) Rollback(domain string) error {
 	url := fmt.Sprintf("http://%s%s%s", a.authHost, a.authPort, "/init/rollback")
 	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
