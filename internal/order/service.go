@@ -35,9 +35,6 @@ func NewService(storage Storage, log *logrus.Entry) OrderService {
 }
 
 func (s *orderService) CreateOrder(order *Order, schema string) (uint, error) {
-	var WaitingProcessingDelivery uint = 4
-	var WaitingProcessingPayment uint = 1
-
 	if order.ProductsIDs != "" {
 		err := validateProductIDs(order.ProductsIDs)
 		if err != nil {

@@ -46,7 +46,9 @@ func main() {
 
 	orderRepository := order.NewStorage(scp)
 	orderService := order.NewService(orderRepository, orderLog)
-	authAdapter := order.NewAuthAdapter(orderLog, env.AuthHost, env.AuthPort)
+
+	authAdapterLog := logger.NewLogger("debug", &order.AuthAdapterLogHook{})
+	authAdapter := order.NewAuthAdapter(authAdapterLog, env.AuthHost, env.AuthPort)
 
 	err = authAdapter.Login(env.SupervisorEmail, env.SupervisorHashPassword, "public")
 	if err != nil {
@@ -55,7 +57,8 @@ func main() {
 
 	router := gin.New()
 
-	paymentAdapter := order.NewPaymentAdapter(orderLog, env.PaymentHost, env.PaymentPort)
+	paymentAdapterLog := logger.NewLogger("debug", &order.PaymentAdapterLogHook{})
+	paymentAdapter := order.NewPaymentAdapter(paymentAdapterLog, env.PaymentHost, env.PaymentPort)
 
 	orderHandler := order.NewHandler(orderService, orderLog, authAdapter, paymentAdapter, env.PaymentRedirectURL)
 	orderHandler.Register(router)
@@ -64,7 +67,7 @@ func main() {
 
 	go func() {
 		if err := server.Run(cfg.Server.Port, router); err != nil {
-			log.Fatal("Failed running server %v", err)
+			log.Fatalf("Failed running server %v", err)
 		}
 	}()
 
