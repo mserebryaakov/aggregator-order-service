@@ -150,7 +150,7 @@ func (h *orderHandler) CreateOrder(c *gin.Context) {
 			Value:    strconv.FormatFloat(body.TotalPrice, 'f', 2, 64),
 			Currency: "RUB",
 		},
-		Capture: false,
+		Capture: true,
 		Confirmation: &Confirmation{
 			Type:      "redirect",
 			ReturnUrl: &returnUrl,
