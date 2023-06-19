@@ -48,6 +48,7 @@ func (s *orderService) CreateOrder(order *Order, schema string) (uint, error) {
 		DeliveryAddress:  order.DeliveryAddress,
 		TotalPrice:       order.TotalPrice,
 		AddressesShopID:  order.AddressesShopID,
+		PaymentKey:       order.PaymentKey,
 		DeliveryStatusID: &WaitingProcessingDelivery,
 		PaymentStatusID:  &WaitingProcessingPayment,
 	}

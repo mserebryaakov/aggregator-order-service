@@ -127,7 +127,15 @@ func (h *orderHandler) CreateOrder(c *gin.Context) {
 
 	h.log.Debugf("CreateOrder: body - %+v", body)
 
+	userId, err := h.getUserId(c)
+	if err != nil {
+		h.log.Debug("CreateOrder: userId is not defined")
+		h.newErrorResponse(c, http.StatusBadRequest, "userId is not defined")
+		return
+	}
+
 	body.PaymentKey = uuid.New().String()
+	body.UserID = userId
 
 	orderId, err := h.orderService.CreateOrder(&body, domain)
 	if err != nil {
