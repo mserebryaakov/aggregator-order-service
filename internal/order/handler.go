@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	systemRole   string = "system"
+	//systemRole   string = "system"
 	clientRole   string = "client"
 	deliveryRole string = "delivery"
 	adminRole    string = "admin"
@@ -56,10 +56,12 @@ func (h *orderHandler) Register(router *gin.Engine) {
 		payment.POST("/refund", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.CreateRefund)
 		payment.GET("/refund", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.GetRefund)
 	}
-	init := router.Group("/order/init")
+	cart := router.Group("/cart")
 	{
-		init.POST("/start", h.authWithRoleMiddlewareSystem([]string{systemRole}), h.initstart)
-		init.POST("/rollback", h.authWithRoleMiddlewareSystem([]string{systemRole}), h.initrollback)
+		cart.GET("", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.GetOrCreateCart)
+		cart.POST("/add", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.CartProductAdd)
+		cart.POST("/del", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.CartProductDelete)
+		cart.DELETE("", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.CartProductClear)
 	}
 }
 
@@ -117,37 +119,66 @@ func (h *orderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	var body Order = Order{}
+	userID, err := h.getUserId(c)
+	if err != nil {
+		h.log.Debugf("CartProductClear: getUserId err - %v", err)
+		h.newErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var order Order = Order{}
+
+	if err := c.ShouldBindJSON(&order); err != nil {
 		h.log.Debugf("CreateOrder: failed to read body - %v", err)
 		h.newErrorResponse(c, http.StatusBadRequest, "failed to read body")
 		return
 	}
 
-	h.log.Debugf("CreateOrder: body - %+v", body)
+	h.log.Debugf("CreateOrder: body - %+v", order)
 
-	userId, err := h.getUserId(c)
+	cart, err := h.orderService.GetCartWithProductsByUserID(userID, domain)
 	if err != nil {
-		h.log.Debug("CreateOrder: userId is not defined")
-		h.newErrorResponse(c, http.StatusBadRequest, "userId is not defined")
+		h.log.Debugf("CreateOrder: GetCartWithProductsByUserID err - %v", err)
+		h.newErrorResponse(c, http.StatusInternalServerError, "failed get cart")
 		return
 	}
 
-	body.PaymentKey = uuid.New().String()
-	body.UserID = userId
+	if cart == nil {
+		h.log.Debugf("CreateOrder: cart not found - %v", err)
+		h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 
-	orderId, err := h.orderService.CreateOrder(&body, domain)
+	var totalPrice uint = 0
+	for _, v := range cart.Products {
+		totalPrice += v.Price
+	}
+
+	if totalPrice == 0 {
+		h.log.Debug("CreateOrder: total cart price = 0")
+		h.newErrorResponse(c, http.StatusNoContent, "total cart price = 0")
+		return
+	}
+
+	order.TotalPrice = float64(totalPrice)
+	order.Products = cart.Products
+
+	h.log.Debugf("CreateOrder: res body - %+v", order)
+
+	order.PaymentKey = uuid.New().String()
+	order.UserID = userID
+
+	orderId, err := h.orderService.CreateOrder(&order, domain)
 	if err != nil {
 		h.log.Debugf("CreateOrder: CreateOrder err - %v", err)
 		h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	returnUrl := fmt.Sprintf("%s%s%s/%s", h.redirectPath, "/redirect/", body.PaymentKey, domain)
+	returnUrl := fmt.Sprintf("%s%s%s/%s", h.redirectPath, "/redirect/", order.PaymentKey, domain)
 	var createPayment CreatePayment = CreatePayment{
 		Amount: Amount{
-			Value:    strconv.FormatFloat(body.TotalPrice, 'f', 2, 64),
+			Value:    strconv.FormatFloat(order.TotalPrice, 'f', 2, 64),
 			Currency: "RUB",
 		},
 		Capture: true,
@@ -155,13 +186,13 @@ func (h *orderHandler) CreateOrder(c *gin.Context) {
 			Type:      "redirect",
 			ReturnUrl: &returnUrl,
 		},
-		Description: &body.DeliveryAddress,
+		Description: &order.DeliveryAddress,
 		Metadata: Metadata{
 			OrderID: strconv.FormatUint(uint64(orderId), 10),
 		},
 	}
 
-	payment, _, err := h.paymentAdapter.CreatePayment(createPayment, body.PaymentKey)
+	payment, _, err := h.paymentAdapter.CreatePayment(createPayment, order.PaymentKey)
 	if err != nil {
 		h.log.Debugf("CreateOrder: paymentAdapter CreatePayment err - %v", err)
 		h.newErrorResponse(c, http.StatusInternalServerError, "failed create payment")
@@ -552,40 +583,140 @@ func (h *orderHandler) GetUnaxeptedOrderByAddressShopId(c *gin.Context) {
 	c.JSON(http.StatusOK, orders)
 }
 
-func (h *orderHandler) initstart(c *gin.Context) {
-	h.log.Debugf("handler initstart")
+func (h *orderHandler) GetOrCreateCart(c *gin.Context) {
+	h.log.Debugf("handler GetCart")
 
-	domain := c.Query("domain")
+	domain := h.getDomain(c)
 	if domain == "" {
-		h.log.Errorf("initstart: missing query parameter (domain)")
-		h.newErrorResponse(c, http.StatusBadRequest, "missing query parameter (domain)")
+		h.log.Debug("GetCart: domain is not defined")
+		h.newErrorResponse(c, http.StatusBadRequest, "domain is not defined")
 		return
 	}
 
-	err := h.orderService.CreateSchema(domain)
+	userID, err := h.getUserId(c)
 	if err != nil {
-		h.log.Debugf("initstart: CreateSchema err - %v", err)
-		h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
+		h.log.Debugf("GetCart: getUserId err - %v", err)
+		h.newErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	cart, err := h.orderService.GetCartWithProductsByUserID(userID, domain)
+	if err != nil {
+		h.log.Debugf("GetCart: GetCartWithProductsByUserID err - %v", err)
+		h.newErrorResponse(c, http.StatusInternalServerError, "failed get cart")
+		return
+	}
+
+	if cart == nil {
+		newCart := Cart{}
+		newCart.UserID = userID
+		_, err := h.orderService.CreateCart(&newCart, domain)
+		if err != nil {
+			h.log.Debugf("GetCart: CreateCart err - %v", err)
+			h.newErrorResponse(c, http.StatusInternalServerError, "failed create cart")
+			return
+		}
+		cart = &newCart
+	}
+
+	c.JSON(http.StatusOK, cart)
+}
+
+func (h *orderHandler) CartProductAdd(c *gin.Context) {
+	h.log.Debugf("handler CartProductAdd")
+
+	domain := h.getDomain(c)
+	if domain == "" {
+		h.log.Debug("CartProductAdd: domain is not defined")
+		h.newErrorResponse(c, http.StatusBadRequest, "domain is not defined")
+		return
+	}
+
+	userID, err := h.getUserId(c)
+	if err != nil {
+		h.log.Debugf("CartProductAdd: getUserId err - %v", err)
+		h.newErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var body Products
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		h.log.Debugf("CartProductAdd: failed to read body - %v", err)
+		h.newErrorResponse(c, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	h.log.Debugf("CartProductAdd: body - %+v", body)
+
+	err = h.orderService.AddProductToCart(userID, &body, domain)
+	if err != nil {
+		h.log.Debugf("CartProductAdd: CartProductAdd err - %v", err)
+		h.newErrorResponse(c, http.StatusInternalServerError, "failed add product to cart")
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{})
 }
 
-func (h *orderHandler) initrollback(c *gin.Context) {
-	h.log.Debugf("handler initrollback")
+func (h *orderHandler) CartProductDelete(c *gin.Context) {
+	h.log.Debugf("handler CartProductDelete")
 
-	domain := c.Query("domain")
+	domain := h.getDomain(c)
 	if domain == "" {
-		h.log.Debug("initrollback: domain is not defined")
-		h.newErrorResponse(c, http.StatusBadRequest, "missing query parameter (domain)")
+		h.log.Debug("CartProductDelete: domain is not defined")
+		h.newErrorResponse(c, http.StatusBadRequest, "domain is not defined")
 		return
 	}
 
-	err := h.orderService.DeleteSchema(domain)
+	userID, err := h.getUserId(c)
 	if err != nil {
-		h.log.Errorf("initrollback: fatal error delete schema - %s", err)
-		h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
+		h.log.Debugf("CartProductDelete: getUserId err - %v", err)
+		h.newErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var body Products
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		h.log.Debugf("CartProductDelete: failed to read body - %v", err)
+		h.newErrorResponse(c, http.StatusBadRequest, "failed to read body")
+		return
+	}
+
+	h.log.Debugf("CartProductDelete: body - %+v", body)
+
+	err = h.orderService.RemoveProductFromCart(userID, &body, domain)
+	if err != nil {
+		h.log.Debugf("CartProductDelete: CartProductDelete err - %v", err)
+		h.newErrorResponse(c, http.StatusInternalServerError, "failed delete product from cart")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{})
+}
+
+func (h *orderHandler) CartProductClear(c *gin.Context) {
+	h.log.Debugf("handler CartProductClear")
+
+	domain := h.getDomain(c)
+	if domain == "" {
+		h.log.Debug("CartProductClear: domain is not defined")
+		h.newErrorResponse(c, http.StatusBadRequest, "domain is not defined")
+		return
+	}
+
+	userID, err := h.getUserId(c)
+	if err != nil {
+		h.log.Debugf("CartProductClear: getUserId err - %v", err)
+		h.newErrorResponse(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err = h.orderService.ClearCartProducts(userID, domain)
+	if err != nil {
+		h.log.Debugf("CartProductClear: ClearCartProducts err - %v", err)
+		h.newErrorResponse(c, http.StatusInternalServerError, "failed delete products from cart")
 		return
 	}
 
@@ -695,54 +826,54 @@ func (h *orderHandler) authWithRoleMiddleware(role []string) gin.HandlerFunc {
 }
 
 // Проверка домена (query) + Авторизация и аутентификация (jwt)
-func (h *orderHandler) authWithRoleMiddlewareSystem(role []string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		h.log.Debug("handle authWithRoleMiddlewareSystem")
+// func (h *orderHandler) authWithRoleMiddlewareSystem(role []string) gin.HandlerFunc {
+// 	return func(c *gin.Context) {
+// 		h.log.Debug("handle authWithRoleMiddlewareSystem")
 
-		domain := c.Query("domain")
-		if domain == "" {
-			h.log.Errorf("authWithRoleMiddlewareSystem: missing query parameter (domain)")
-			h.newErrorResponse(c, http.StatusBadRequest, "missing query parameter (domain)")
-			return
-		}
+// 		domain := c.Query("domain")
+// 		if domain == "" {
+// 			h.log.Errorf("authWithRoleMiddlewareSystem: missing query parameter (domain)")
+// 			h.newErrorResponse(c, http.StatusBadRequest, "missing query parameter (domain)")
+// 			return
+// 		}
 
-		tokenString := c.Request.Header.Get("Authorization")
+// 		tokenString := c.Request.Header.Get("Authorization")
 
-		if tokenString == "" {
-			h.log.Debug("authWithRoleMiddlewareSystem: authorization token not found")
-			c.AbortWithStatus(http.StatusUnauthorized)
-			return
-		}
+// 		if tokenString == "" {
+// 			h.log.Debug("authWithRoleMiddlewareSystem: authorization token not found")
+// 			c.AbortWithStatus(http.StatusUnauthorized)
+// 			return
+// 		}
 
-		code, userId, err := h.authadapter.Auth(role, tokenString, domain)
-		if err != nil {
-			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice error - %v", err)
-			h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
-			return
-		}
+// 		code, userId, err := h.authadapter.Auth(role, tokenString, domain)
+// 		if err != nil {
+// 			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice error - %v", err)
+// 			h.newErrorResponse(c, http.StatusInternalServerError, err.Error())
+// 			return
+// 		}
 
-		switch code {
-		case 200:
-			c.Set("domain", domain)
-			c.Set("userId", userId)
-			c.Next()
-		case 403:
-			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice with code - %d", 403)
-			c.AbortWithStatus(http.StatusForbidden)
-			return
-		case 401:
-			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice with code - %d", 401)
-			c.AbortWithStatus(http.StatusUnauthorized)
-			return
-		case 404:
-			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice with code - %d", 404)
-			c.AbortWithStatus(http.StatusNotFound)
-			return
-		default:
-			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice with unexpected code - %d, err - %v", code, err)
-			h.log.Errorf("fatal unexpected auth result with code - %v", code)
-			c.AbortWithStatus(http.StatusInternalServerError)
-			return
-		}
-	}
-}
+// 		switch code {
+// 		case 200:
+// 			c.Set("domain", domain)
+// 			c.Set("userId", userId)
+// 			c.Next()
+// 		case 403:
+// 			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice with code - %d", 403)
+// 			c.AbortWithStatus(http.StatusForbidden)
+// 			return
+// 		case 401:
+// 			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice with code - %d", 401)
+// 			c.AbortWithStatus(http.StatusUnauthorized)
+// 			return
+// 		case 404:
+// 			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice with code - %d", 404)
+// 			c.AbortWithStatus(http.StatusNotFound)
+// 			return
+// 		default:
+// 			h.log.Debugf("authWithRoleMiddlewareSystem: auth in authservice with unexpected code - %d, err - %v", code, err)
+// 			h.log.Errorf("fatal unexpected auth result with code - %v", code)
+// 			c.AbortWithStatus(http.StatusInternalServerError)
+// 			return
+// 		}
+// 	}
+// }

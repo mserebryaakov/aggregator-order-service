@@ -2,7 +2,6 @@ package order
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/mserebryaakov/aggregator-order-service/pkg/postgres"
 	"gorm.io/gorm"
@@ -16,10 +15,14 @@ type Storage interface {
 	GetOrderByID(userId, orderID uint, schema string) (*Order, error)
 	GetOrdersByDeliveryID(deliveryUserID uint, schema string) ([]Order, error)
 	GetUnaxeptedOrderByAddressShopId(addressShopId []uint, schema string) ([]Order, error)
-	CreateSchema(domain string) error
-	DeleteSchema(domain string) error
 	UpdateOrderPaymentID(orderID uint, paymentID string, schema string) error
 	GetOrderByPaymentKey(paymentKey string, schema string) (*Order, error)
+
+	CreateCart(cart *Cart, schema string) (uint, error)
+	GetCartWithProductsByUserID(userID uint, schema string) (*Cart, error)
+	AddProductToCart(userID uint, product *Products, schema string) error
+	RemoveProductFromCart(userID uint, product *Products, schema string) error
+	ClearCartProducts(userID uint, schema string) error
 
 	PaymentSuccess(orderID uint, schema string) error
 }
@@ -96,7 +99,7 @@ func (s *OrderStorage) GetOrdersByUserID(userID uint, schema string) ([]Order, e
 	var orders []Order
 
 	err := s.withConnectionPool(func(db *gorm.DB) error {
-		return db.Where("user_id = ?", userID).Find(&orders).Error
+		return db.Where("user_id = ?", userID).Preload("Products").Find(&orders).Error
 	}, schema)
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -114,7 +117,7 @@ func (s *OrderStorage) GetOrdersByDeliveryID(deliveryUserID uint, schema string)
 	var orders []Order
 
 	err := s.withConnectionPool(func(db *gorm.DB) error {
-		return db.Where("courier_id = ? AND delivery_status_id = ?", deliveryUserID, ProcessOfDelivery).Find(&orders).Error
+		return db.Where("courier_id = ? AND delivery_status_id = ?", deliveryUserID, ProcessOfDelivery).Preload("Products").Find(&orders).Error
 	}, schema)
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -132,7 +135,7 @@ func (s *OrderStorage) GetOrderByID(userId, orderID uint, schema string) (*Order
 	var order Order
 
 	err := s.withConnectionPool(func(db *gorm.DB) error {
-		return db.Where("user_id = ?", userId).First(&order, orderID).Error
+		return db.Where("user_id = ?", userId).Preload("Products").First(&order, orderID).Error
 	}, schema)
 
 	if err != nil {
@@ -148,7 +151,7 @@ func (s *OrderStorage) GetUnaxeptedOrderByAddressShopId(addressShopId []uint, sc
 	var order []Order
 
 	err := s.withConnectionPool(func(db *gorm.DB) error {
-		return db.Where("addresses_shop_id IN (?) AND delivery_status_id = ?", addressShopId, WaitingProcessing).Find(&order).Error
+		return db.Where("addresses_shop_id IN (?) AND delivery_status_id = ?", addressShopId, WaitingProcessing).Preload("Products").Find(&order).Error
 	}, schema)
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -160,58 +163,6 @@ func (s *OrderStorage) GetUnaxeptedOrderByAddressShopId(addressShopId []uint, sc
 	}
 
 	return order, nil
-}
-
-func (s *OrderStorage) CreateSchema(domain string) error {
-	err := s.withConnectionPool(func(db *gorm.DB) error {
-		tx := db.Begin()
-		if tx.Error != nil {
-			return tx.Error
-		}
-
-		var count int64
-		tx.Raw("SELECT COUNT(*) FROM pg_namespace WHERE nspname = ?", domain).Scan(&count)
-		if count != 0 {
-			tx.Rollback()
-			return fmt.Errorf("create schema failed (already exists): %s", domain)
-		}
-
-		if err := tx.Exec("CREATE SCHEMA IF NOT EXISTS " + domain).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
-
-		err := tx.Commit().Error
-		if err != nil {
-			return err
-		}
-
-		resschema, err := s.scp.GetConnectionPool(domain)
-		if err != nil {
-			return err
-		}
-
-		err = RunSchemaMigration(resschema)
-		if err != nil {
-			return err
-		}
-
-		return nil
-	}, "public")
-
-	return err
-}
-
-func (s *OrderStorage) DeleteSchema(domain string) error {
-	err := s.withConnectionPool(func(db *gorm.DB) error {
-		return db.Exec("DROP SCHEMA IF EXISTS " + domain + " CASCADE").Error
-	}, "public")
-
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
-
-	return err
 }
 
 func (s *OrderStorage) UpdateOrderPaymentID(orderID uint, paymentID string, schema string) error {
@@ -230,7 +181,7 @@ func (s *OrderStorage) GetOrderByPaymentKey(paymentKey string, schema string) (*
 	var order Order
 
 	err := s.withConnectionPool(func(db *gorm.DB) error {
-		result := db.Where("payment_key = ?", paymentKey).First(&order)
+		result := db.Where("payment_key = ?", paymentKey).Preload("Products").First(&order)
 		if result.Error == nil && result.RowsAffected == 0 {
 			return errOrderWithPaymentKeyNotfound
 		}
@@ -242,4 +193,76 @@ func (s *OrderStorage) GetOrderByPaymentKey(paymentKey string, schema string) (*
 	}
 
 	return &order, nil
+}
+
+func (s *OrderStorage) CreateCart(cart *Cart, schema string) (uint, error) {
+	err := s.withConnectionPool(func(db *gorm.DB) error {
+		return db.Create(&cart).Error
+	}, schema)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return cart.ID, nil
+}
+
+func (s *OrderStorage) GetCartWithProductsByUserID(userID uint, schema string) (*Cart, error) {
+	var cart Cart
+
+	err := s.withConnectionPool(func(db *gorm.DB) error {
+		return db.Where("user_id = ?", userID).Preload("Products").First(&cart).Error
+	}, schema)
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &cart, nil
+}
+
+func (s *OrderStorage) AddProductToCart(userID uint, product *Products, schema string) error {
+	var cart Cart
+
+	err := s.withConnectionPool(func(db *gorm.DB) error {
+		getCartErr := db.Where("user_id = ?", userID).Preload("Products").First(&cart).Error
+		if getCartErr != nil {
+			return getCartErr
+		}
+		return db.Model(&cart).Association("Products").Append(product)
+	}, schema)
+
+	return err
+}
+
+func (s *OrderStorage) RemoveProductFromCart(userID uint, product *Products, schema string) error {
+	var cart Cart
+
+	err := s.withConnectionPool(func(db *gorm.DB) error {
+		getCartErr := db.Where("user_id = ?", userID).Preload("Products").First(&cart).Error
+		if getCartErr != nil {
+			return getCartErr
+		}
+		return db.Model(&cart).Association("Products").Delete(product)
+	}, schema)
+
+	return err
+}
+
+func (s *OrderStorage) ClearCartProducts(userID uint, schema string) error {
+	var cart Cart
+
+	err := s.withConnectionPool(func(db *gorm.DB) error {
+		getCartErr := db.Where("user_id = ?", userID).Preload("Products").First(&cart).Error
+		if getCartErr != nil {
+			return getCartErr
+		}
+		return db.Model(&cart).Association("Products").Clear()
+	}, schema)
+
+	return err
 }

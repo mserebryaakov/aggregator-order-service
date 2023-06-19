@@ -1,9 +1,6 @@
 package order
 
 import (
-	"strconv"
-	"strings"
-
 	"github.com/sirupsen/logrus"
 )
 
@@ -15,11 +12,15 @@ type OrderService interface {
 	GetOrderByID(userId, orderId uint, schema string) (*Order, error)
 	GetOrdersByDeliveryID(deliveryUserID uint, schema string) ([]Order, error)
 	GetUnaxeptedOrderByAddressShopId(addressShopId []uint, schema string) ([]Order, error)
-	CreateSchema(schema string) error
-	DeleteSchema(schema string) error
 	UpdateOrderPaymentID(orderID uint, paymentID string, schema string) error
 	GetOrderByPaymentKey(paymentKey string, schema string) (*Order, error)
 	PaymentSuccess(orderID uint, schema string) error
+
+	CreateCart(cart *Cart, schema string) (uint, error)
+	GetCartWithProductsByUserID(userID uint, schema string) (*Cart, error)
+	AddProductToCart(userID uint, product *Products, schema string) error
+	RemoveProductFromCart(userID uint, product *Products, schema string) error
+	ClearCartProducts(userID uint, schema string) error
 }
 
 type orderService struct {
@@ -35,19 +36,12 @@ func NewService(storage Storage, log *logrus.Entry) OrderService {
 }
 
 func (s *orderService) CreateOrder(order *Order, schema string) (uint, error) {
-	if order.ProductsIDs != "" {
-		err := validateProductIDs(order.ProductsIDs)
-		if err != nil {
-			return 0, err
-		}
-	}
-
 	newOrder := Order{
 		UserID:           order.UserID,
-		ProductsIDs:      order.ProductsIDs,
+		Products:         order.Products,
 		DeliveryAddress:  order.DeliveryAddress,
 		TotalPrice:       order.TotalPrice,
-		AddressesShopID:  order.AddressesShopID,
+		AddressesID:      order.AddressesID,
 		PaymentKey:       order.PaymentKey,
 		DeliveryStatusID: &WaitingProcessingDelivery,
 		PaymentStatusID:  &WaitingProcessingPayment,
@@ -80,25 +74,6 @@ func (s *orderService) GetUnaxeptedOrderByAddressShopId(addressShopId []uint, sc
 	return s.storage.GetUnaxeptedOrderByAddressShopId(addressShopId, schema)
 }
 
-func (s *orderService) CreateSchema(schema string) error {
-	return s.storage.CreateSchema(schema)
-}
-
-func (s *orderService) DeleteSchema(schema string) error {
-	return s.storage.DeleteSchema(schema)
-}
-
-func validateProductIDs(productIDs string) error {
-	ids := strings.Split(productIDs, ",")
-	for _, id := range ids {
-		_, err := strconv.ParseUint(id, 10, 64)
-		if err != nil {
-			return errProductIDsString
-		}
-	}
-	return nil
-}
-
 func (s *orderService) UpdateOrderPaymentID(orderID uint, paymentID string, schema string) error {
 	return s.storage.UpdateOrderPaymentID(orderID, paymentID, schema)
 }
@@ -109,4 +84,24 @@ func (s *orderService) GetOrderByPaymentKey(paymentKey string, schema string) (*
 
 func (s *orderService) PaymentSuccess(orderID uint, schema string) error {
 	return s.storage.PaymentSuccess(orderID, schema)
+}
+
+func (s *orderService) CreateCart(cart *Cart, schema string) (uint, error) {
+	return s.storage.CreateCart(cart, schema)
+}
+
+func (s *orderService) GetCartWithProductsByUserID(userID uint, schema string) (*Cart, error) {
+	return s.storage.GetCartWithProductsByUserID(userID, schema)
+}
+
+func (s *orderService) AddProductToCart(userID uint, product *Products, schema string) error {
+	return s.storage.AddProductToCart(userID, product, schema)
+}
+
+func (s *orderService) RemoveProductFromCart(userID uint, product *Products, schema string) error {
+	return s.storage.RemoveProductFromCart(userID, product, schema)
+}
+
+func (s *orderService) ClearCartProducts(userID uint, schema string) error {
+	return s.storage.ClearCartProducts(userID, schema)
 }

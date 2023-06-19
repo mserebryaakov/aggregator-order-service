@@ -15,6 +15,39 @@ var (
 	CanceledPayment          uint = 3 // Отменено
 )
 
+type Shop struct {
+	gorm.Model
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ContactInfo string `json:"contact_info"`
+}
+
+type Addresses struct {
+	gorm.Model
+	Region      string `json:"region"`
+	City        string `json:"city"`
+	Street      string `json:"street"`
+	ContactInfo string `json:"contact_info"`
+}
+
+type Products struct {
+	gorm.Model
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	ImageID     string   `json:"image_id"`
+	Price       uint     `json:"price"`
+	CategoryID  *uint    `json:"category_id"`
+	Category    Category `gorm:"foreignKey:CategoryID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+}
+
+type Category struct {
+	gorm.Model
+	ParentCategoryID *uint  `json:"parent_category_id"`
+	Name             string `json:"name"`
+	Path             string `json:"path"`
+}
+
+// Order service
 type PaymentStatus struct {
 	gorm.Model
 	Code string `json:"code"`
@@ -30,10 +63,11 @@ type DeliveryStatus struct {
 type Order struct {
 	gorm.Model
 	UserID           uint           `json:"user_id"`
-	ProductsIDs      string         `json:"products_ids"`
+	Products         []Products     `gorm:"many2many:order_products;" json:"products"`
 	DeliveryAddress  string         `json:"delivery_address"`
 	TotalPrice       float64        `json:"total_price"`
-	AddressesShopID  uint           `json:"addresses_shop_id"`
+	AddressesID      int            `json:"addresses_id"`
+	Addresses        Addresses      `gorm:"foreignKey:AddressesID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	PaymentID        string         `json:"payment_id"`
 	PaymentKey       string         `json:"payment_key"`
 	DeliveryStatusID *uint          `json:"delivery_status_id"`
@@ -41,4 +75,10 @@ type Order struct {
 	PaymentStatusID  *uint          `json:"payment_status_id"`
 	PaymentStatus    PaymentStatus  `gorm:"foreignKey:PaymentStatusID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	CourierID        *uint          `json:"courier_id"`
+}
+
+type Cart struct {
+	gorm.Model
+	UserID   uint       `json:"user_id"`
+	Products []Products `gorm:"many2many:cart_products;" json:"products"`
 }

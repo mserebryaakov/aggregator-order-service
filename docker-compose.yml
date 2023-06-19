@@ -14,16 +14,16 @@ services:
       - aggregator-service-network
     restart: unless-stopped
 
-  orderdb:
-    image: postgres:latest
-    ports:
-      - "5434:5432"
-    networks:
-      - aggregator-service-network
-    environment:
-      POSTGRES_DB: "orderdb"
-      POSTGRES_USER: "orderdbuser"
-      POSTGRES_PASSWORD: "orderdbpassword"
+  # orderdb:
+  #   image: postgres:latest
+  #   ports:
+  #     - "5434:5432"
+  #   networks:
+  #     - aggregator-service-network
+  #   environment:
+  #     POSTGRES_DB: "orderdb"
+  #     POSTGRES_USER: "orderdbuser"
+  #     POSTGRES_PASSWORD: "orderdbpassword"
 
 networks:
   aggregator-service-network:
