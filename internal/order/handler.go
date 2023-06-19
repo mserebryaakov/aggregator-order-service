@@ -56,7 +56,7 @@ func (h *orderHandler) Register(router *gin.Engine) {
 		payment.POST("/refund", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.CreateRefund)
 		payment.GET("/refund", h.authWithRoleMiddleware([]string{adminRole, clientRole}), h.GetRefund)
 	}
-	init := router.Group("/init")
+	init := router.Group("/order/init")
 	{
 		init.POST("/start", h.authWithRoleMiddlewareSystem([]string{systemRole}), h.initstart)
 		init.POST("/rollback", h.authWithRoleMiddlewareSystem([]string{systemRole}), h.initrollback)
@@ -73,6 +73,7 @@ func (h *orderHandler) CheckRedirect(c *gin.Context) {
 	if err != nil {
 		h.log.Errorf("CheckRedirect: GetOrderByPaymentKey err - %v", err)
 		c.JSON(200, gin.H{})
+		return
 	}
 
 	if order == nil {
@@ -85,6 +86,13 @@ func (h *orderHandler) CheckRedirect(c *gin.Context) {
 	if err != nil {
 		h.log.Errorf("CheckRedirect: paymentAdapter GetPayment err - %v", err)
 		c.JSON(200, gin.H{})
+		return
+	}
+
+	if payment == nil {
+		h.log.Errorf("CheckRedirect: payment not found (paymentId - %s)", order.PaymentID)
+		c.JSON(200, gin.H{})
+		return
 	}
 
 	if payment.Status == "succeeded" {
@@ -92,6 +100,7 @@ func (h *orderHandler) CheckRedirect(c *gin.Context) {
 		if err != nil {
 			h.log.Errorf("CheckRedirect: PaymentSuccess err - %v", err)
 			c.JSON(200, gin.H{})
+			return
 		}
 	}
 
